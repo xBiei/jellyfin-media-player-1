@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.10...3.31 FATAL_ERROR)
 
 # use a toolchain file if any for Embedded
 if (EXISTS "${CMAKE_SOURCE_DIR}/toolchain.cmake")
@@ -13,6 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "" FORCE)
 option(CHECK_FOR_UPDATES "Enable checking for new versions of Jellyfin Media Player" ON)
 option(OPENELEC "Make an OpenELEC build" OFF)
 option(LINUX_X11POWER "Enable non D-Bus screensaver management" OFF)
+option(USE_STATIC_MPVQT "Build MpvQt from bundled submodule instead of using system library" ON)
 
 if (NOT CHECK_FOR_UPDATES)
     add_definitions(-DDISABLE_UPDATE_CHECK)
@@ -70,12 +71,15 @@ elseif(UNIX AND (NOT APPLE))
   include(LinuxConfiguration)
 endif(APPLE)
 
-if (Qt5_POSITION_INDEPENDENT_CODE)
+if (Qt6_POSITION_INDEPENDENT_CODE)
   SET(CMAKE_POSITION_INDEPENDENT_CODE ON)
-endif(Qt5_POSITION_INDEPENDENT_CODE)
+endif(Qt6_POSITION_INDEPENDENT_CODE)
 
 add_subdirectory(external)
 add_subdirectory(src)
+
+enable_testing()
+add_subdirectory(tests)
 
 include(CPackConfiguration)
 

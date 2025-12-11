@@ -1,95 +1,198 @@
 async function tryConnect(server) {
-    document.getElementById('connect-button').disabled = true;
-
-    AbortSignal.timeout = function timeout(ms) {
-        const ctrl = new AbortController()
-        setTimeout(() => ctrl.abort(), ms)
-        return ctrl.signal
-    }
-
     try {
         if (!server.startsWith("http")) {
             server = "http://" + server;
         }
-        serverBaseURL = server.replace(/\/+$/, "");
-        const url = serverBaseURL + "/System/Info/Public";
-        const response = await fetch(url, { cache: 'no-cache', signal: AbortSignal.timeout(5000) });
-        if (response.ok && (await response.json()).Id) {
-            const htmlResponse = await fetch(server, { cache: 'no-cache' });
-            if (!htmlResponse.ok) {
-                throw new Error("Status not ok");
-            }
 
-            if (response.headers.get("content-security-policy")) {
-                // Sigh... If we just navigate to the URL, the server's CSP will block us loading other resources.
-                // So we have to parse the HTML, set a new base href, and then write it back to the page.
-                // We also have to override the history functions to make sure they use the correct URL.
-                console.log("Using CSP workaround");
-                const webUrl = htmlResponse.url.replace(/\/[^\/]*$/, "/");
-                const realUrl = window.location.href;
+        console.log("Checking connectivity to:", server);
 
-                const html = await htmlResponse.text();
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, "text/html");
-                const base = doc.createElement("base");
-                base.href = webUrl
-                doc.head.insertBefore(base, doc.head.firstChild);
+        const resolvedUrl = await window.jmpCheckServerConnectivity(server);
+        console.log("Server connectivity check passed");
+        console.log("Resolved URL:", resolvedUrl);
 
-                const oldPushState = window.history.pushState;
-                window.history.pushState = function(state, title, url) {
-                    url = url ? (new URL(url, realUrl)).toString() : realUrl;
-                    return oldPushState.call(window.history, state, title, url);
-                };
+        // Save original URL but navigate to fully-resolved redirect
+        window.jmpInfo.settings.main.userWebClient = server;
 
-                const oldReplaceState = window.history.replaceState;
-                window.history.replaceState = function(state, title, url) {
-                    url = url ? (new URL(url, realUrl)).toString() : realUrl;
-                    return oldReplaceState.call(window.history, state, title, url);
-                };
+        // Navigation will clean up handlers, but do it explicitly
+        window.location = resolvedUrl;
 
-                document.open();
-                document.write((new XMLSerializer()).serializeToString(doc));
-                document.close();
-            } else {
-                console.log("Using normal navigation");
-                window.location = server;
-            }
-
-            await window.initCompleted;
-            window.jmpInfo.settings.main.userWebClient = server;
-
-            return true;
-        }
+        return true;
     } catch (e) {
-        console.error(e);
-        document.getElementById('connect-button').disabled = false;
+        console.error("Server connectivity check failed:", e);
         return false;
     }
 }
 
-document.getElementById('connect-form').addEventListener('submit', async (e) => {
+let isConnecting = false;
+
+const updateButtonState = () => {
+    const address = document.getElementById('address');
+    const button = document.getElementById('connect-button');
+    const hasValue = address.value.trim().length > 0;
+
+    if (!isConnecting) {
+        button.disabled = !hasValue;
+    }
+};
+
+const cancelOnEscape = (e) => {
+    if (isConnecting && e.key === 'Escape') {
+        cancelConnection();
+    }
+};
+
+const startConnecting = async () => {
+    const address = document.getElementById('address');
+    const title = document.getElementById('title');
+    const spinner = document.getElementById('spinner');
+    const button = document.getElementById('connect-button');
+    const server = address.value;
+
+    isConnecting = true;
+    title.textContent = '';
+    title.style.visibility = 'hidden';
+    address.classList.add('connecting');
+    address.style.visibility = 'hidden';
+    address.disabled = true;
+    spinner.style.display = 'block';
+    button.style.visibility = 'hidden';
+    document.addEventListener('keydown', cancelOnEscape);
+
+    // C++ handles retries, just wait for result
+    const connected = await tryConnect(server);
+
+    if (!connected) {
+        isConnecting = false;
+        title.textContent = document.getElementById('title').getAttribute('data-original-text');
+        title.style.visibility = 'visible';
+        address.classList.remove('connecting');
+        address.style.visibility = 'visible';
+        address.disabled = false;
+        spinner.style.display = 'none';
+        button.style.visibility = 'visible';
+        document.removeEventListener('keydown', cancelOnEscape);
+        updateButtonState();
+    }
+};
+
+const cancelConnection = () => {
+    if (!isConnecting) return;
+
+    console.log("Cancelling connection");
+    isConnecting = false;
+
+    // Cancel C++ connectivity check and abort JS promise
+    if (window.api && window.api.system) {
+        window.api.system.cancelServerConnectivity();
+    }
+    if (window.jmpCheckServerConnectivity.abort) {
+        window.jmpCheckServerConnectivity.abort();
+    }
+
+    const address = document.getElementById('address');
+    const title = document.getElementById('title');
+    const spinner = document.getElementById('spinner');
+    const button = document.getElementById('connect-button');
+
+    title.textContent = document.getElementById('title').getAttribute('data-original-text');
+    title.style.visibility = 'visible';
+    address.classList.remove('connecting');
+    address.style.visibility = 'visible';
+    address.disabled = false;
+    spinner.style.display = 'none';
+    button.style.visibility = 'visible';
+    document.removeEventListener('keydown', cancelOnEscape);
+    updateButtonState();
+};
+
+// Button click handler
+document.getElementById('connect-button').addEventListener('click', (e) => {
     e.preventDefault();
-    const server = document.getElementById('address').value;
-    const result = await tryConnect(server);
-    if (!result) {
-        document.getElementById('backdrop').style.display = 'block';
+    e.stopPropagation();
+
+    if (!e.target.disabled) {
+        startConnecting();
     }
 });
 
-document.getElementById('connect-fail-button').addEventListener('click', () => {
-    document.getElementById('backdrop').style.display = 'none';
+// Form submit handler
+document.getElementById('connect-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!isConnecting) {
+        startConnecting();
+    }
 });
 
+// Input change handler
+document.getElementById('address').addEventListener('input', updateButtonState);
 
-// load the server if we have one
-(async() => {
+
+// Enter key handler
+document.addEventListener('keydown', (e) => {
+    const address = document.getElementById('address');
+    if (e.key === 'Enter' && !isConnecting && !address.disabled && address.value.trim()) {
+        e.preventDefault();
+        startConnecting();
+    }
+});
+
+// Auto-connect on load
+(async () => {
+    console.log('Auto-connect: starting');
+
+    await window.apiPromise;
+
     const savedServer = window.jmpInfo.settings.main.userWebClient;
-    if (savedServer) {
-        document.getElementById('address').value = savedServer;
-    }
+    console.log('Auto-connect: savedServer =', savedServer);
 
-    if (!savedServer || !(await tryConnect(savedServer))) {
-        document.getElementById('splash').style.display = 'none';
-        document.getElementById('main').style.display = 'block';
+    if (savedServer) {
+        console.log('Auto-connect: checking saved server', savedServer);
+
+        const address = document.getElementById('address');
+        const title = document.getElementById('title');
+        const spinner = document.getElementById('spinner');
+        const button = document.getElementById('connect-button');
+
+        // Set address value for potential display later
+        address.value = savedServer;
+
+        // Show connecting UI
+        isConnecting = true;
+        title.textContent = '';
+        title.style.visibility = 'hidden';
+        address.classList.add('connecting');
+        address.style.visibility = 'hidden';
+        address.disabled = true;
+        spinner.style.display = 'block';
+        button.style.visibility = 'hidden';
+        document.addEventListener('keydown', cancelOnEscape);
+
+        // C++ handles retries, just wait for result
+        const connected = await tryConnect(savedServer);
+
+        if (!connected) {
+            // User cancelled or error - show UI
+            isConnecting = false;
+            title.textContent = document.getElementById('title').getAttribute('data-original-text');
+            title.style.visibility = 'visible';
+            address.classList.remove('connecting');
+            address.style.visibility = 'visible';
+            address.disabled = false;
+            spinner.style.display = 'none';
+            button.style.visibility = 'visible';
+            document.removeEventListener('keydown', cancelOnEscape);
+            address.focus();
+            updateButtonState();
+        }
+    } else {
+        const title = document.getElementById('title');
+        const address = document.getElementById('address');
+        const button = document.getElementById('connect-button');
+
+        title.style.visibility = 'visible';
+        address.style.visibility = 'visible';
+        button.style.visibility = 'visible';
+        address.focus();
+        updateButtonState();
     }
 })();

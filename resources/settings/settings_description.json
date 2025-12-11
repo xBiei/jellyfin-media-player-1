@@ -72,7 +72,6 @@
         "default": "debug",
         "hidden": true,
         "possible_values": [
-          [ "trace", "trace" ],
           [ "debug", "debug" ],
           [ "info", "info" ],
           [ "warn", "warn" ],
@@ -163,6 +162,18 @@
         "display_name": "Enable Windows Taskbar Integration",
         "default": true,
         "platforms": [ "windows" ]
+      },
+      {
+        "value": "enableMPV",
+        "display_name": "Enable MPV Player",
+        "help": "Enables MPV player for video and audio playback. When disabled, Jellyfin Media Player will fall back to the browser's built-in HTML5 player. This setting requires an application restart to take effect.\n\nNote: Disabling MPV will lose advanced features like audio passthrough, hardware decoding options, and codec-specific settings.",
+        "default": true
+      },
+      {
+        "value": "allowBrowserZoom",
+        "display_name": "Allow Browser Zoom",
+        "help": "Allows zooming the web interface using Ctrl+Plus/Minus, Ctrl+Scroll, or pinch-to-zoom. Changing this setting requires an application restart for pinch-to-zoom.",
+        "default": true
       }
     ]
   },
@@ -223,33 +234,33 @@
       {
         "value": "passthrough.ac3",
         "display_name": "AC3 Passthrough",
-        "help": "Enables AC3 passthrough. Requires \"S/PDIF\", or \"HDMI\" device type. The default is disabled.",
+        "help": "Enables AC3 passthrough. Requires \"S/PDIF\", or \"HDMI\" device type and all video transcoding to be off. The default is disabled.",
         "default": false
       },
       {
         "value": "passthrough.dts",
         "display_name": "DTS Passthrough",
-        "help": "Enables DTS passthrough. Requires \"S/PDIF\", or \"HDMI\" device type. The default is disabled.",
+        "help": "Enables DTS passthrough. Requires \"S/PDIF\", or \"HDMI\" device type and all video transcoding to be off. The default is disabled.",
         "default": false
       },
       {
         "value": "passthrough.eac3",
         "display_name": "E-AC3 Passthrough",
-        "help": "Enables E-AC3 passthrough. Requires \"HDMI\" device type. The default is disabled.",
+        "help": "Enables E-AC3 passthrough. Requires \"HDMI\" device type and all video transcoding to be off. The default is disabled.",
         "default": false,
         "platforms_excluded": [ "osx", "oe_rpi" ]
       },
       {
         "value": "passthrough.dts-hd",
         "display_name": "DTS-HD Passthrough",
-        "help": "Enables DTS-HD passthrough. Requires \"HDMI\" device type. The default is disabled.",
+        "help": "Enables DTS-HD passthrough. Requires \"HDMI\" device type and all video transcoding to be off. The default is disabled.",
         "default": false,
         "platforms_excluded": [ "osx", "oe_rpi" ]
       },
       {
         "value": "passthrough.truehd",
         "display_name": "TrueHD Passthrough",
-        "help": "Enables TrueHD passthrough. Requires \"HDMI\" device type. The default is disabled.",
+        "help": "Enables TrueHD passthrough. Requires \"HDMI\" device type and all video transcoding to be off. The default is disabled.",
         "default": false,
         "platforms_excluded": [ "osx", "oe_rpi" ]
       }
@@ -437,7 +448,11 @@
           [ 1.25, "1.25x" ],
           [ 1.5, "1.5x" ],
           [ 1.75, "1.75x" ],
-          [ 2.0, "2x" ]
+          [ 2.0, "2x" ],
+          [ 2.5, "2.5x" ],
+          [ 3.0, "3x" ],
+          [ 3.5, "3.5x" ],
+          [ 4.0, "4.0x" ]
         ]
       }
     ]

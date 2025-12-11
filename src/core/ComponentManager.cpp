@@ -12,8 +12,10 @@
 #include "system/SystemComponent.h"
 #include "settings/SettingsComponent.h"
 #include "taskbar/TaskbarComponent.h"
+#include "ui/WindowManager.h"
+#include "mpris/MprisComponent.h"
 
-#if KONVERGO_OPENELEC
+#ifdef KONVERGO_OPENELEC
 #include "system/openelec/OESystemComponent.h"
 #endif
 
@@ -58,8 +60,10 @@ void ComponentManager::initialize()
   registerComponent(&PlayerComponent::Get());
   registerComponent(&PowerComponent::Get());
   registerComponent(&TaskbarComponent::Get());
+  registerComponent(&WindowManager::Get());
+  registerComponent(&MprisComponent::Get());
 
-#if KONVERGO_OPENELEC
+#ifdef KONVERGO_OPENELEC
   registerComponent(&OESystemComponent::Get());
 #endif
 

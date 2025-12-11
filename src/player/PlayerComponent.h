@@ -17,6 +17,7 @@
 
 #include <mpv/client.h>
 
+class MpvController;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 class PlayerComponent : public ComponentBase
@@ -34,14 +35,14 @@ public:
   ~PlayerComponent() override;
 
   // Deprecated. Corresponds to stop() + queueMedia().
-  Q_INVOKABLE bool load(const QString& url, const QVariantMap& options, const QVariantMap& metadata, const QString& audioStream = QString(), const QString& subtitleStream = QString());
+  Q_INVOKABLE bool load(const QString& url, const QVariantMap& options, const QVariantMap& metadata, const QVariant& audioStream = QVariant(), const QVariant& subtitleStream = QVariant());
 
   // Append a media item to the internal playlist. If nothing is played yet, the
   // newly appended item will start playing immediately.
   // options:
   //  - startMilliseconds: start playback at this time (in ms)
   //  - autoplay: if false, start playback paused; if true, start normally
-  Q_INVOKABLE void queueMedia(const QString& url, const QVariantMap& options, const QVariantMap &metadata, const QString& audioStream, const QString& subtitleStream);
+  Q_INVOKABLE void queueMedia(const QString& url, const QVariantMap& options, const QVariantMap &metadata, const QVariant& audioStream, const QVariant& subtitleStream);
 
   // This clears all items queued with queueMedia().
   // It explicitly excludes the currently playing item. The main use of this function
@@ -60,7 +61,21 @@ public:
 
   Q_INVOKABLE virtual void pause();
   Q_INVOKABLE virtual void play();
-  
+
+  // OS media integration notifications (called from JavaScript)
+  Q_INVOKABLE void notifyShuffleChange(bool enabled);
+  Q_INVOKABLE void notifyRepeatChange(const QString& mode);
+  Q_INVOKABLE void notifyFullscreenChange(bool isFullscreen);
+  Q_INVOKABLE void notifyRateChange(double rate);
+  Q_INVOKABLE void notifyQueueChange(bool canNext, bool canPrevious);
+  Q_INVOKABLE void notifyPlaybackStop(bool isNavigating);
+  Q_INVOKABLE void notifyDurationChange(qint64 durationMs);
+  Q_INVOKABLE void notifyPlaybackState(const QString& state);
+  Q_INVOKABLE void notifyPosition(qint64 positionMs);
+  Q_INVOKABLE void notifySeek(qint64 positionMs);
+  Q_INVOKABLE void notifyMetadata(const QVariantMap& metadata, const QString& baseUrl);
+  Q_INVOKABLE void notifyVolumeChange(double volume);
+
   // 0-100 volume 0=mute and 100=normal
   // Ignored if no audio output active (e.g. when no file is playing).
   Q_INVOKABLE virtual void setVolume(int volume);
@@ -82,8 +97,8 @@ public:
   // Uses the "name" from the device list.
   Q_INVOKABLE virtual void setAudioDevice(const QString& name);
   
-  Q_INVOKABLE virtual void setAudioStream(const QString& audioStream);
-  Q_INVOKABLE virtual void setSubtitleStream(const QString& subtitleStream);
+  Q_INVOKABLE virtual void setAudioStream(const QVariant& audioStream);
+  Q_INVOKABLE virtual void setSubtitleStream(const QVariant& subtitleStream);
 
   Q_INVOKABLE virtual void setAudioDelay(qint64 milliseconds);
   Q_INVOKABLE virtual void setSubtitleDelay(qint64 milliseconds);
@@ -122,9 +137,17 @@ public:
   Q_INVOKABLE qint64 getPosition();
   Q_INVOKABLE qint64 getDuration();
 
+  Q_INVOKABLE QVariantList getWebPlaylist() const;
+  Q_INVOKABLE QString getCurrentWebPlaylistItemId() const;
+  Q_INVOKABLE void setWebPlaylist(const QVariantList& playlist, const QString& currentItemId);
+
   QRect videoRectangle() { return m_videoRectangle; }
 
-  const mpv::qt::Handle getMpvHandle() const { return m_mpv; }
+  void setMpvController(MpvController* controller) {
+    if (!m_mpv)
+      m_mpv = controller;
+  }
+  void initializeMpv();
 
   virtual void setWindow(QQuickWindow* window);
 
@@ -183,6 +206,7 @@ Q_SIGNALS:
   void windowVisible(bool visible);
   // emitted as soon as the duration of the current file is known
   void updateDuration(qint64 milliseconds);
+  void playbackRateChanged(double rate);
 
   // current position in ms should be triggered 2 times a second
   // when position updates
@@ -193,7 +217,22 @@ Q_SIGNALS:
   void onMpvEvents();
 
   void onMetaData(const QVariantMap &meta, QUrl baseUrl);
-  
+
+  void webPlaylistChanged(const QVariantList& playlist, const QString& currentItemId);
+
+  // OS media integration signals (for MPRIS, SMTC, etc.)
+  void shuffleChanged(bool enabled);
+  void repeatChanged(const QString& mode);
+  void fullscreenChanged(bool isFullscreen);
+  void rateChanged(double rate);
+  void queueChanged(bool canNext, bool canPrevious);
+  void playbackStopped(bool isNavigating);
+  void durationChanged(qint64 durationMs);
+  void playbackStateChanged(const QString& state);
+  void positionChanged(qint64 positionMs);
+  void seekPerformed(qint64 positionMs);
+  void metadataChanged(const QVariantMap& metadata, const QString& baseUrl);
+  void volumeChanged(double volume);
 private:
   // this is the function actually implemented in the backends. the variantmap contains
   // a few known keys:
@@ -221,9 +260,9 @@ private:
   void startCodecsLoading(std::function<void()> resume);
   void updateVideoAspectSettings();
   QVariantList findStreamsForURL(const QString &url);
-  void reselectStream(const QString &streamSelection, MediaType target);
+  void reselectStream(const QVariant &streamSelection, MediaType target);
 
-  mpv::qt::Handle m_mpv;
+  MpvController* m_mpv = nullptr;
 
   State m_state;
   bool m_paused;
@@ -247,9 +286,14 @@ private:
   bool m_doAc3Transcoding;
   QStringList m_passthroughCodecs;
   QVariantMap m_serverMediaInfo;
-  QString m_currentSubtitleStream;
-  QString m_currentAudioStream;
+  QVariant m_currentSubtitleStream;
+  QVariant m_currentAudioStream;
   QRect m_videoRectangle;
+
+  QVariantList m_webPlaylist;
+  QString m_currentWebPlaylistItemId;
+  QTimer* m_playlistTimer;
+  QVariantList m_queuedItems;
 };
 
 #endif // PLAYERCOMPONENT_H

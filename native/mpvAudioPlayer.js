@@ -1,3 +1,4 @@
+(function() {
 let fadeTimeout;
 function fade(instance, elem, startingVolume) {
     instance._isFadingOut = true;
@@ -107,6 +108,12 @@ class mpvAudioPlayer {
             const src = self._currentSrc;
 
             if (src) {
+                if (!destroyPlayer) {
+                    self.pause();
+                    self.onEndedInternal();
+                    return Promise.resolve();
+                }
+
                 const originalVolume = self._volume;
 
                 return fade(self, null, self._volume).then(function () {
@@ -114,10 +121,7 @@ class mpvAudioPlayer {
                     self.setVolume(originalVolume, false);
 
                     self.onEndedInternal();
-
-                    if (destroyPlayer) {
-                        self.destroy();
-                    }
+                    self.destroy();
                 });
             }
             return Promise.resolve();
@@ -156,13 +160,12 @@ class mpvAudioPlayer {
         function onPlaying() {
             if (!self._started) {
                 self._started = true;
+
+                const volume = self.getSavedVolume() * 100;
+                self.setVolume(volume, volume != self._volume);
             }
 
-            const volume = self.getSavedVolume() * 100;
-            self.setVolume(volume, volume != self._volume);
-
-            self.setPlaybackRate(1);
-            self.setMute(false, false);
+            self.setPlaybackRate(self.getPlaybackRate());
 
             if (self._paused) {
                 self._paused = false;
@@ -261,6 +264,10 @@ class mpvAudioPlayer {
     setPlaybackRate(value) {
         this._playRate = value;
         window.api.player.setPlaybackRate(value * 1000);
+
+        if (window.api && window.api.player) {
+            window.api.player.notifyRateChange(value);
+        }
     }
 
     getPlaybackRate() {
@@ -347,3 +354,4 @@ function getSupportedFeatures() {
 }
 
 window._mpvAudioPlayer = mpvAudioPlayer;
+})();

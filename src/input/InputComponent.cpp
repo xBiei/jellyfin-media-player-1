@@ -132,13 +132,20 @@ void InputComponent::handleAction(const QString& action)
         else
         {
           qDebug() << "Invoking slot" << qPrintable(recvSlot->m_slot.data());
-          QGenericArgument arg0 = QGenericArgument();
 
+          bool success;
           if (recvSlot->m_hasArguments)
-            arg0 = Q_ARG(const QString&, hostArguments);
+          {
+            success = QMetaObject::invokeMethod(recvSlot->m_receiver, recvSlot->m_slot.data(),
+                                                Qt::AutoConnection, Q_ARG(const QString&, hostArguments));
+          }
+          else
+          {
+            success = QMetaObject::invokeMethod(recvSlot->m_receiver, recvSlot->m_slot.data(),
+                                                Qt::AutoConnection);
+          }
 
-          if (!QMetaObject::invokeMethod(recvSlot->m_receiver, recvSlot->m_slot.data(),
-                                         Qt::AutoConnection, arg0))
+          if (!success)
           {
             qCritical() << "Invoking slot" << qPrintable(recvSlot->m_slot.data()) << "failed!";
           }
@@ -186,14 +193,14 @@ void InputComponent::remapInput(const QString &source, const QString &keycode, I
   m_autoRepeatActions.clear();
 
   auto actions = m_mappings->mapToAction(source, keycode);
-  for (auto action : actions)
+  for (const auto& action : actions)
   {
-    if (action.type() == QVariant::String)
+    if (action.typeId() == QMetaType::QString)
     {
       queuedActions.append(action.toString());
       m_autoRepeatActions.append(action.toString());
     }
-    else if (action.type() == QVariant::Map)
+    else if (action.typeId() == QMetaType::QVariantMap)
     {
       QVariantMap map = action.toMap();
       if (map.contains("long"))
@@ -211,7 +218,7 @@ void InputComponent::remapInput(const QString &source, const QString &keycode, I
         queuedActions.append(map.value("short").toString());
       }
     }
-    else if (action.type() == QVariant::List)
+    else if (action.typeId() == QMetaType::QStringList)
     {
       queuedActions.append(action.toStringList());
     }
@@ -252,6 +259,27 @@ void InputComponent::sendAction(const QString action)
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
+void InputComponent::setVolume(int volume)
+{
+  qDebug() << "InputComponent: setVolume" << volume;
+  emit volumeChanged(volume);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+void InputComponent::seekTo(qint64 position)
+{
+  qDebug() << "InputComponent: seekTo" << position << "ms";
+  emit positionSeek(position);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+void InputComponent::setRate(double rate)
+{
+  qDebug() << "InputComponent: setRate" << rate;
+  emit rateChanged(rate);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
 void InputComponent::registerHostCommand(const QString& command, QObject* receiver, const char* slot)
 {
   auto  recvSlot = new ReceiverSlot;
@@ -277,7 +305,8 @@ void InputComponent::registerHostCommand(const QString& command, QObject* receiv
   }
   else
   {
-    qCritical() << "Slot for host command missing, or has incorrect signature!";
+    qCritical() << "Slot for host command" << command << "missing, or has incorrect signature:"
+                << receiver->metaObject()->className() << "::" << slot;
   }
 }
 

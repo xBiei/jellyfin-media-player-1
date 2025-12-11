@@ -4,12 +4,18 @@
 #include "ComponentManager.h"
 #include <QTimer>
 #include <QNetworkReply>
+#include <QNetworkAccessManager>
+#include <QJSValue>
 #include "utils/Utils.h"
 #include "Paths.h"
 #include "Names.h"
 
 // System modifiers
 #define SYSTEM_MODIFIER_OPENELEC "OpenELEC"
+
+// Network timeouts (milliseconds)
+constexpr int NETWORK_REQUEST_TIMEOUT_MS = 30000;
+constexpr int CONNECTIVITY_RETRY_INTERVAL_MS = 5000;
 
 class SystemComponent : public ComponentBase
 {
@@ -20,6 +26,7 @@ public:
   Q_PROPERTY(bool isMacos READ platformIsMac CONSTANT)
   Q_PROPERTY(bool isWindows READ platformIsWindows CONSTANT)
   Q_PROPERTY(bool isLinux READ platformIsLinux CONSTANT)
+  Q_PROPERTY(bool isFreeBSD READ platformIsFreeBSD CONSTANT)
   Q_PROPERTY(qreal scale MEMBER m_scale CONSTANT)
 
   bool componentExport() override { return true; }
@@ -31,9 +38,14 @@ public:
   Q_INVOKABLE void exit();
   Q_INVOKABLE static void restart();
 
-  Q_INVOKABLE void info(QString text);
+  Q_INVOKABLE void jsLog(int level, QString text);
 
-  Q_INVOKABLE void setCursorVisibility(bool visible);
+  Q_INVOKABLE void checkServerConnectivity(QString url);
+  Q_INVOKABLE void cancelServerConnectivity();
+  Q_SIGNAL void serverConnectivityResult(QString url, bool success, QString resolvedUrl);
+
+  QString extractBaseUrl(const QString& url);
+  void resolveUrl(const QString& url, std::function<void(const QString&)> callback);
 
   Q_INVOKABLE QString getUserAgent();
 
@@ -46,6 +58,9 @@ public:
   Q_INVOKABLE void runUserScript(QString script);
 
   Q_INVOKABLE QString getNativeShellScript();
+
+  Q_INVOKABLE void fetchPageForCSPWorkaround(QString url);
+  Q_SIGNAL void pageContentReady(QString html, QString finalUrl, bool hadCSP);
 
   Q_INVOKABLE void checkForUpdates();
 
@@ -65,7 +80,8 @@ public:
     platformTypeOsx,
     platformTypeWindows,
     platformTypeLinux,
-    platformTypeOpenELEC
+    platformTypeOpenELEC,
+    platformTypeFreeBSD
   };
 
   // possible values for target types
@@ -87,7 +103,6 @@ public:
   bool isWebClientConnected() const { return !m_webClientVersion.isEmpty(); }
 
   inline QString authenticationToken() { return m_authenticationToken; }
-  inline bool cursorVisible() { return m_cursorVisible; }
 
   Q_INVOKABLE void crashApp();
 
@@ -108,15 +123,22 @@ private:
   bool platformIsWindows() const { return m_platformType == platformTypeWindows; }
   bool platformIsMac() const { return m_platformType == platformTypeOsx; }
   bool platformIsLinux() const { return m_platformType == platformTypeLinux; }
+  bool platformIsFreeBSD() const { return m_platformType == platformTypeFreeBSD; }
 
-  QTimer* m_mouseOutTimer;
+  QSslConfiguration getSSLConfiguration();
+  void setReplyTimeout(QNetworkReply* reply, int ms);
+
+  QNetworkAccessManager* m_networkManager;
   PlatformType m_platformType;
   PlatformArch m_platformArch;
   bool m_doLogMessages;
   QString m_authenticationToken;
   QString m_webClientVersion;
-  bool m_cursorVisible;
   qreal m_scale;
+  QNetworkReply* m_connectivityCheckReply;
+  QNetworkReply* m_resolveUrlReply;
+  QTimer* m_connectivityRetryTimer;
+  QString m_pendingConnectivityUrl;
 
 };
 

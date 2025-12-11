@@ -13,12 +13,9 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QList>
-#include <QSettings>
 #include "input/InputComponent.h"
 #include "system/SystemComponent.h"
 #include "Version.h"
-
-#define OLDEST_PREVIOUS_VERSION_KEY "oldestPreviousVersion"
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 SettingsComponent::SettingsComponent(QObject *parent) : ComponentBase(parent), m_settingsVersion(-1)
@@ -54,12 +51,12 @@ void SettingsComponent::cycleSettingCommand(const QString& args)
   // If no possible values are defined, check the type of the default value.
   // In the case it's a boolean simply negate the current value to cycle through.
   // Otherwise log an error message, that it's not possible to cycle through the value.
-  if (values.size() == 0)
+  if (values.empty())
   {
-    if (section->defaultValue(valueName).type() == QVariant::Bool)
+    if (section->defaultValue(valueName).typeId()== QMetaType::Bool)
     {
       QVariant currentValue = section->value(valueName);
-      auto nextValue = currentValue.toBool() ? false : true;
+      auto nextValue = !currentValue.toBool();
       setValue(sectionID, valueName, nextValue);
       qDebug() << "Setting" << settingName << "to " << (nextValue ? "Enabled" : "Disabled");
       emit SystemComponent::Get().settingsMessage(valueName, nextValue ? "Enabled" : "Disabled");
@@ -181,7 +178,11 @@ QVariant SettingsComponent::orderedSections()
 static void writeFile(const QString& filename, const QByteArray& data)
 {
   QSaveFile file(filename);
-  file.open(QIODevice::WriteOnly | QIODevice::Text);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+  {
+    qCritical() << "Could not open" << filename << "for writing";
+    return;
+  }
   file.write(data);
   if (!file.commit())
   {
@@ -314,11 +315,6 @@ void SettingsComponent::loadConf(const QString& path, bool storage)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 void SettingsComponent::saveSettings()
 {
-  if (m_oldestPreviousVersion.isEmpty())
-  {
-    qCritical() << "Not writing settings: uninitialized.\n";
-    return;
-  }
 
   QVariantMap sections;
 
@@ -394,7 +390,7 @@ void SettingsComponent::setValues(const QVariantMap& options)
   QString key = options["key"].toString();
   QVariant values = options["value"];
 
-  if (values.type() == QVariant::Map || values.isNull())
+  if (values.typeId() == QMetaType::QVariantMap || values.isNull())
   {
     SettingsSection* section = getSection(key);
     if (!section)
@@ -413,7 +409,7 @@ void SettingsComponent::setValues(const QVariantMap& options)
 
     saveSection(section);
   }
-  else if (values.type() == QVariant::String)
+  else if (values.typeId() == QMetaType::QString)
   {
     setValue(SETTINGS_SECTION_WEBCLIENT, key, values);
   }
@@ -550,7 +546,7 @@ void SettingsComponent::parseSection(const QJsonObject& sectionObject)
   int platformMask = platformMaskFromObject(sectionObject);
   int sectionOrder = sectionObject.value("order").toInt(-1);
 
-  auto section = new SettingsSection(sectionName, (quint8)platformMask, sectionOrder, this);
+  auto section = new SettingsSection(sectionName, static_cast<quint8>(platformMask), sectionOrder, this);
   section->setHidden(sectionObject.value("hidden").toBool(false));
   section->setStorage(sectionObject.value("storage").toBool(false));
 
@@ -584,7 +580,7 @@ void SettingsComponent::parseSection(const QJsonObject& sectionObject)
     }
 
     int vPlatformMask = platformMaskFromObject(valobj);
-    SettingsValue* setting = new SettingsValue(valobj.value("value").toString(), defaultval, (quint8)vPlatformMask, this);
+    SettingsValue* setting = new SettingsValue(valobj.value("value").toString(), defaultval, static_cast<quint8>(vPlatformMask), this);
 
     if (valobj.contains("display_name"))
       setting->setDisplayName(valobj.value("display_name").toString());
@@ -708,9 +704,6 @@ bool SettingsComponent::componentInitialize()
   if (!loadDescription())
     return false;
 
-  // Must be called before we possibly write the config file.
-  setupVersion();
-
   load();
 
   // add our AudioSettingsController that will inspect audio settings and react.
@@ -726,24 +719,6 @@ bool SettingsComponent::componentInitialize()
   return true;
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////
-void SettingsComponent::setupVersion()
-{
-  QSettings settings;
-  m_oldestPreviousVersion = settings.value(OLDEST_PREVIOUS_VERSION_KEY).toString();
-  if (m_oldestPreviousVersion.isEmpty())
-  {
-    // Version key was not present. It could still be a pre-1.1 PMP install,
-    // so here we try to find out whether this is the very first install, or
-    // if an older one exists.
-    QFile configFile(Paths::dataDir("jellyfinmediaplayer.conf"));
-    if (configFile.exists())
-      m_oldestPreviousVersion = "legacy";
-    else
-      m_oldestPreviousVersion = Version::GetVersionString();
-    settings.setValue(OLDEST_PREVIOUS_VERSION_KEY, m_oldestPreviousVersion);
-  }
-}
 
 /////////////////////////////////////////////////////////////////////////////////////////
 bool SettingsComponent::resetAndSaveOldConfiguration()
@@ -755,15 +730,15 @@ bool SettingsComponent::resetAndSaveOldConfiguration()
 /////////////////////////////////////////////////////////////////////////////////////////
 QString SettingsComponent::getWebClientUrl(bool desktop)
 {
+  (void)desktop;
   QString url;
 
   url = SettingsComponent::Get().value(SETTINGS_SECTION_PATH, "startupurl_desktop").toString();
 
   if (url == "bundled")
   {
-    auto path = Paths::webExtensionPath() + "find-webclient.html";
-
-    url = "file:///" + path;
+    // Use qrc:// scheme for bundled web client
+    url = "qrc:///web-client/extension/find-webclient.html";
   }
 
   qDebug() << "Using web-client URL: " << url;
@@ -810,6 +785,47 @@ bool SettingsComponent::ignoreSSLErrors()
 bool SettingsComponent::autodetectCertBundle()
 {
   return SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "autodetectCertBundle").toBool();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+bool SettingsComponent::allowBrowserZoom()
+{
+  return SettingsComponent::Get().value(SETTINGS_SECTION_MAIN, "allowBrowserZoom").toBool();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+QString SettingsComponent::detectCertBundlePath()
+{
+  static QString cachedPath;
+  static bool cached = false;
+
+  if (cached) {
+    return cachedPath;
+  }
+
+#if !defined(Q_OS_WIN) && !defined(Q_OS_MAC)
+  QList<QString> certPaths;
+  certPaths << "/etc/ssl/certs/ca-certificates.crt"
+            << "/etc/pki/tls/certs/ca-bundle.crt"
+            << "/usr/share/ssl/certs/ca-bundle.crt"
+            << "/usr/local/share/certs/ca-root-nss.crt"
+            << "/etc/ssl/cert.pem"
+            << "/usr/share/curl/curl-ca-bundle.crt"
+            << "/usr/local/share/curl/curl-ca-bundle.crt"
+            << "/var/lib/ca-certificates/ca-bundle.pem";
+
+  for (const auto& path : certPaths)
+  {
+    if (QFile::exists(path) && QFileInfo(path).isReadable()) {
+      cachedPath = path;
+      cached = true;
+      return cachedPath;
+    }
+  }
+#endif
+
+  cached = true;
+  return cachedPath; // Returns empty QString if not found
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////

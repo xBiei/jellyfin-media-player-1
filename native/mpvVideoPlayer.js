@@ -1,5 +1,5 @@
 /* eslint-disable indent */
-
+(function() {
     function getMediaStreamAudioTracks(mediaSource) {
         return mediaSource.MediaStreams.filter(function (s) {
             return s.Type === 'Audio';
@@ -32,6 +32,10 @@
             this.syncPlayWrapAs = 'htmlvideoplayer';
             this.priority = -1;
             this.useFullSubtitleUrls = true;
+            /**
+             * @type {boolean}
+             */
+            this.isLocalPlayer = true;
             /**
              * @type {boolean}
              */
@@ -133,16 +137,6 @@
             /**
              * @private
              */
-            this.onNavigatedToOsd = () => {
-                const dlg = this._videoDialog;
-                if (dlg) {
-                    dlg.style.zIndex = 'unset';
-                }
-            };
-
-            /**
-             * @private
-             */
             this.onPlaying = () => {
                 if (!this._started) {
                     this._started = true;
@@ -154,15 +148,23 @@
 
                     this.setPlaybackRate(this.getPlaybackRate());
 
-                    if (this._currentPlayOptions.fullscreen) {
-                        this.appRouter.showVideoOsd().then(this.onNavigatedToOsd);
-                    } else {
-                        this.setTransparency('backdrop');
-                        this._videoDialog.dlg.style.zIndex = 'unset';
+                    // Hide backdrop when playback starts
+                    const dlg = this._videoDialog;
+                    if (dlg) {
+                        dlg.style.backgroundImage = '';
                     }
 
-                    // Need to override default style.
-                    this._videoDialog.style.setProperty('background', 'transparent', 'important');
+                    // Navigate to OSD view to show playback screen
+                    if (this._currentPlayOptions.fullscreen) {
+                        this.appRouter.showVideoOsd();
+                        // Lower video dialog z-index so OSD can receive input
+                        if (dlg) {
+                            dlg.style.zIndex = 'unset';
+                        }
+                    }
+
+                    // Keep video fullscreen - native OSD is above it
+                    window.api.player.setVideoRectangle(0, 0, 0, 0);
                 }
 
                 if (this._paused) {
@@ -234,14 +236,38 @@
             this._currentTime = null;
 
             this.resetSubtitleOffset();
-            this.loading.show();
-            window.api.power.setScreensaverEnabled(false);
+            if (options.fullscreen) {
+                this.loading.show();
+            }
             const elem = await this.createMediaElement(options);
             return await this.setCurrentSrc(elem, options);
         }
 
         getSavedVolume() {
             return this.appSettings.get('volume') || 1;
+        }
+
+
+        tryGetFramerate(options) {
+            if (options.mediaSource && options.mediaSource.MediaStreams) {
+                for (let stream of options.mediaSource.MediaStreams) {
+                    if (stream.Type == "Video") {
+                        return stream.RealFrameRate || stream.AverageFrameRate || null;
+                    }
+                }
+            }
+        }
+
+        /**
+         * @private
+         */
+        getStreamByIndex(mediaStreams, jellyIndex) {
+            for (const stream of mediaStreams) {
+                if (stream.Index == jellyIndex) {
+                    return stream;
+                }
+            }
+            return null;
         }
 
         /**
@@ -253,96 +279,12 @@
                 if (source.Type != streamType || source.IsExternal) {
                     continue;
                 }
-
                 if (source.Index == jellyIndex) {
                     return relIndex;
                 }
-
                 relIndex += 1;
             }
-
             return null;
-        }
-
-        /**
-         * @private
-         */
-        getStreamByIndex(mediaStreams, jellyIndex) {
-            for (const source of mediaStreams) {
-                if (source.Index == jellyIndex) {
-                    return source;
-                }
-            }
-
-            return null;
-        }
-
-        /**
-         * @private
-         */
-        getSubtitleParam() {
-            const options = this._currentPlayOptions;
-
-            if (this._subtitleTrackIndexToSetOnPlaying != null && this._subtitleTrackIndexToSetOnPlaying >= 0) {
-                const initialSubtitleStream = this.getStreamByIndex(options.mediaSource.MediaStreams, this._subtitleTrackIndexToSetOnPlaying);
-                if (!initialSubtitleStream || initialSubtitleStream.DeliveryMethod === 'Encode') {
-                    this._subtitleTrackIndexToSetOnPlaying = -1;
-                } else if (initialSubtitleStream.DeliveryMethod === 'External') {
-                    return '#,' + initialSubtitleStream.DeliveryUrl;
-                }
-            }
-
-            if (this._subtitleTrackIndexToSetOnPlaying == -1 || this._subtitleTrackIndexToSetOnPlaying == null) {
-                return '';
-            }
-
-            const subtitleRelIndex = this.getRelativeIndexByType(
-                options.mediaSource.MediaStreams,
-                this._subtitleTrackIndexToSetOnPlaying,
-                'Subtitle'
-            );
-
-            return subtitleRelIndex != null
-                ? '#' + subtitleRelIndex
-                : '';
-        }
-
-        /**
-         * @private
-         */
-        getAudioParam() {
-            const options = this._currentPlayOptions;
-
-            if (this._audioTrackIndexToSetOnPlaying != null && this._audioTrackIndexToSetOnPlaying >= 0) {
-                const initialAudioStream = this.getStreamByIndex(options.mediaSource.MediaStreams, this._audioTrackIndexToSetOnPlaying);
-                if (!initialAudioStream) {
-                    return '#1';
-                }
-            }
-
-            if (this._audioTrackIndexToSetOnPlaying == -1 || this._audioTrackIndexToSetOnPlaying == null) {
-                return '#1';
-            }
-
-            const audioRelIndex = this.getRelativeIndexByType(
-                options.mediaSource.MediaStreams,
-                this._audioTrackIndexToSetOnPlaying,
-                'Audio'
-            );
-
-            return audioRelIndex != null
-                ? '#' + audioRelIndex
-                : '#1';
-        }
-
-        tryGetFramerate(options) {
-            if (options.mediaSource && options.mediaSource.MediaStreams) {
-                for (let stream of options.mediaSource.MediaStreams) {
-                    if (stream.Type == "Video") {
-                        return stream.RealFrameRate || stream.AverageFrameRate || null;
-                    }
-                }
-            }
         }
 
         /**
@@ -358,7 +300,10 @@
                 const ms = (options.playerStartPositionTicks || 0) / 10000;
                 this._currentPlayOptions = options;
                 this._subtitleTrackIndexToSetOnPlaying = options.mediaSource.DefaultSubtitleStreamIndex == null ? -1 : options.mediaSource.DefaultSubtitleStreamIndex;
-                this._audioTrackIndexToSetOnPlaying = options.playMethod === 'Transcode' ? null : options.mediaSource.DefaultAudioStreamIndex;
+                this._audioTrackIndexToSetOnPlaying = options.mediaSource.DefaultAudioStreamIndex;
+
+                console.log('[MPV] Audio track index:', this._audioTrackIndexToSetOnPlaying);
+                console.log('[MPV] Subtitle track index:', this._subtitleTrackIndexToSetOnPlaying);
 
                 const streamdata = {type: 'video', headers: {'User-Agent': 'JellyfinMediaPlayer'}, metadata: options.item, media: {}};
                 const fps = this.tryGetFramerate(options);
@@ -367,18 +312,69 @@
                 }
 
                 const player = window.api.player;
+
+                const streams = options.mediaSource?.MediaStreams || [];
+
+                // Handle audio
+                const audioRelIndex = this._audioTrackIndexToSetOnPlaying != null && this._audioTrackIndexToSetOnPlaying >= 0
+                    ? this.getRelativeIndexByType(streams, this._audioTrackIndexToSetOnPlaying, 'Audio')
+                    : -1;
+
+                // Handle subtitle - check for external first
+                let subtitleParam;
+                if (this._subtitleTrackIndexToSetOnPlaying >= 0) {
+                    const subStream = this.getStreamByIndex(streams, this._subtitleTrackIndexToSetOnPlaying);
+                    if (subStream && subStream.DeliveryMethod === 'External' && subStream.DeliveryUrl) {
+                        subtitleParam = '#,' + subStream.DeliveryUrl;
+                        console.log('[MPV] External subtitle URL:', subStream.DeliveryUrl);
+                    } else {
+                        const relIndex = this.getRelativeIndexByType(streams, this._subtitleTrackIndexToSetOnPlaying, 'Subtitle');
+                        subtitleParam = relIndex != null ? relIndex : -1;
+                        console.log('[MPV] Mapped subtitle index:', this._subtitleTrackIndexToSetOnPlaying, '->', subtitleParam);
+                    }
+                } else {
+                    subtitleParam = -1;
+                }
+
+                console.log('[MPV] Mapped audio index:', this._audioTrackIndexToSetOnPlaying, '->', audioRelIndex);
+
                 player.load(val,
                     { startMilliseconds: ms, autoplay: true },
                     streamdata,
-                    this.getAudioParam(),
-                    this.getSubtitleParam(),
+                    audioRelIndex,
+                    subtitleParam,
                     resolve);
             });
         }
 
         setSubtitleStreamIndex(index) {
+            console.log('[MPV] setSubtitleStreamIndex called with index:', index);
             this._subtitleTrackIndexToSetOnPlaying = index;
-            window.api.player.setSubtitleStream(this.getSubtitleParam());
+
+            if (index < 0) {
+                window.api.player.setSubtitleStream(-1);
+                return;
+            }
+
+            const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
+            const stream = this.getStreamByIndex(streams, index);
+
+            // Handle external subtitle URL
+            if (stream && stream.DeliveryMethod === 'External' && stream.DeliveryUrl) {
+                console.log('[MPV] Loading external subtitle:', stream.DeliveryUrl);
+                window.api.player.setSubtitleStream('#,' + stream.DeliveryUrl);
+                return;
+            }
+
+            // Handle embedded subtitle via relative index
+            const relIndex = this.getRelativeIndexByType(streams, index, 'Subtitle');
+            console.log('[MPV] Mapped subtitle index:', index, '->', relIndex);
+            window.api.player.setSubtitleStream(relIndex != null ? relIndex : -1);
+        }
+
+        setSecondarySubtitleStreamIndex(index) {
+            // MPV doesn't support secondary subtitles - no-op for compatibility
+            console.log('[MPV] setSecondarySubtitleStreamIndex not supported, ignoring index:', index);
         }
 
         resetSubtitleOffset() {
@@ -428,15 +424,13 @@
         }
 
         setAudioStreamIndex(index) {
+            console.log('[MPV] setAudioStreamIndex called with index:', index);
             this._audioTrackIndexToSetOnPlaying = index;
-            const streams = this.getSupportedAudioStreams();
 
-            if (streams.length < 2) {
-                // If there's only one supported stream then trust that the player will handle it on it's own
-                return;
-            }
-
-            window.api.player.setAudioStream(this.getAudioParam());
+            const streams = this._currentPlayOptions?.mediaSource?.MediaStreams || [];
+            const relIndex = index < 0 ? -1 : this.getRelativeIndexByType(streams, index, 'Audio');
+            console.log('[MPV] Mapped audio index:', index, '->', relIndex);
+            window.api.player.setAudioStream(relIndex != null ? relIndex : -1);
         }
 
         onEndedInternal() {
@@ -453,7 +447,6 @@
 
         stop(destroyPlayer) {
             window.api.player.stop();
-            window.api.power.setScreensaverEnabled(true);
 
             this.onEndedInternal();
 
@@ -464,16 +457,15 @@
         }
 
         removeMediaDialog() {
-            this.loading.hide();
             window.api.player.stop();
-            window.api.power.setScreensaverEnabled(true);
 
-            this.setTransparency('none');
+            window.api.player.setVideoRectangle(-1, 0, 0, 0);
 
             document.body.classList.remove('hide-scroll');
 
             const dlg = this._videoDialog;
             if (dlg) {
+                this.setTransparency(0); // TRANSPARENCY_LEVEL.None
                 this._videoDialog = null;
                 dlg.parentNode.removeChild(dlg);
             }
@@ -505,8 +497,6 @@
             const dlg = document.querySelector('.videoPlayerContainer');
 
             if (!dlg) {
-                this.loading.show();
-
                 const dlg = document.createElement('div');
 
                 dlg.classList.add('videoPlayerContainer');
@@ -526,7 +516,15 @@
 
                 dlg.innerHTML = html;
 
+                // Set backdrop if available
+                if (options.backdropUrl) {
+                    dlg.style.backgroundImage = `url('${options.backdropUrl}')`;
+                    dlg.style.backgroundSize = 'cover';
+                    dlg.style.backgroundPosition = 'center';
+                }
+
                 document.body.insertBefore(dlg, document.body.firstChild);
+                this.setTransparency(2); // TRANSPARENCY_LEVEL.Full
                 this._videoDialog = dlg;
                 const player = window.api.player;
                 if (!this._hasConnection) {
@@ -537,6 +535,18 @@
                     player.updateDuration.connect(this.onDuration);
                     player.error.connect(this.onError);
                     player.paused.connect(this.onPause);
+
+                    // Log all other signals
+                    player.buffering.connect((percent) => {
+                        console.log(`[MPV Signal] buffering: ${percent}`);
+                    });
+                    player.canceled.connect(() => console.log('[MPV Signal] canceled'));
+                    player.stopped.connect(() => console.log('[MPV Signal] stopped'));
+                    player.stateChanged.connect((newState, oldState) => console.log(`[MPV Signal] stateChanged: ${oldState} -> ${newState}`));
+                    player.videoPlaybackActive.connect((active) => console.log(`[MPV Signal] videoPlaybackActive: ${active}`));
+                    player.windowVisible.connect((visible) => console.log(`[MPV Signal] windowVisible: ${visible}`));
+                    player.onVideoRecangleChanged.connect(() => console.log('[MPV Signal] onVideoRecangleChanged'));
+                    player.onMetaData.connect((meta, baseUrl) => console.log(`[MPV Signal] onMetaData: ${JSON.stringify(meta)}`));
                 }
 
                 if (options.fullscreen) {
@@ -559,6 +569,11 @@
      */
     canPlayMediaType(mediaType) {
         return (mediaType || '').toLowerCase() === 'video';
+    }
+
+    canPlayItem(item, playOptions) {
+        // Delegate to canPlayMediaType - MPV can play any video the media type check passes
+        return this.canPlayMediaType(item.MediaType);
     }
 
     /**
@@ -592,6 +607,20 @@
         }
 
         return this._supportedFeatures.includes(feature);
+    }
+
+    isFullscreen() {
+        // Check native window fullscreen state
+        if (window.jmpInfo && window.jmpInfo.settings && window.jmpInfo.settings.main) {
+            return window.jmpInfo.settings.main.fullscreen === true;
+        }
+        return false;
+    }
+
+    toggleFullscreen() {
+        if (window.api && window.api.input) {
+            window.api.input.executeActions(['host:fullscreen']);
+        }
     }
 
     // Save this for when playback stops, because querying the time at that point might return 0
@@ -650,7 +679,6 @@
 
     pause() {
         window.api.player.pause();
-        window.api.power.setScreensaverEnabled(true);
     }
 
     // This is a retry after error
@@ -661,7 +689,6 @@
 
     unpause() {
         window.api.player.play();
-        window.api.power.setScreensaverEnabled(false);
     }
 
     paused() {
@@ -672,6 +699,10 @@
         let playSpeed = +value; //this comes as a string from player force int for now
         this._playRate = playSpeed;
         window.api.player.setPlaybackRate(playSpeed * 1000);
+
+        if (window.api && window.api.player) {
+            window.api.player.notifyRateChange(playSpeed);
+        }
     }
 
     getPlaybackRate() {
@@ -709,6 +740,18 @@
         }, {
             name: '2x',
             id: 2.0
+        }, {
+            name: '2.5x',
+            id: 2.5
+        }, {
+            name: '3x',
+            id: 3.0
+        }, {
+            name: '3.5x',
+            id: 3.5
+        }, {
+            name: '4.0x',
+            id: 4.0
         }];
     }
 
@@ -849,7 +892,8 @@
     setAspectRatio(value) {
         window.jmpInfo.settings.video.aspect = value;
     }
-    }
+}
 /* eslint-enable indent */
 
 window._mpvVideoPlayer = mpvVideoPlayer;
+})();
